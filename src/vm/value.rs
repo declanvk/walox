@@ -1,3 +1,4 @@
+use super::Chunk;
 use std::{alloc, cell::RefCell, fmt, ptr::NonNull};
 
 /// The value type of the virtual machine
@@ -163,7 +164,7 @@ impl HeapInner {
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn allocate_with<T: ConcreteObject>(&self, f: impl FnOnce() -> T) -> &mut T {
+    fn allocate_with<'h, 'o, T: ConcreteObject>(&'h self, f: impl FnOnce() -> T) -> &'o mut T {
         let layout = alloc::Layout::new::<T>();
         if layout.size() == 0 {
             panic!("Cannot allocate zero-sized value!");
@@ -184,7 +185,7 @@ impl HeapInner {
         // # Safety
         //
         // 1. `ptr.write`
-        //   - ptr is valid: nonnull, dereferenceable (possibly not relevant for this
+        //   - ptr is valid: non-null, dereferenceable (possibly not relevant for this
         //     case)
         //   - ptr is properly aligned because of Layout
         //
@@ -202,22 +203,47 @@ impl HeapInner {
         }
     }
 
+    fn allocate_object_with<T: ConcreteObject>(&mut self, f: impl FnOnce() -> T) -> Object {
+        let object = self.allocate_with(f);
+        let object = T::upcast(object);
+        self.last_allocated = object;
+        object
+    }
+
     /// Allocate a new `StringObject` in the `Heap`.
     pub fn allocate_string(&mut self, s: impl Into<String>) -> Object {
-        let object = self.allocate_with(|| StringObject {
-            base: ObjectBase {
-                obj_type: ObjectType::String,
-                next_obj: self.last_allocated,
-            },
-            value: s.into().into_boxed_str(),
-        });
+        self.allocate_object_with({
+            let last_allocated = self.last_allocated;
+            move || StringObject {
+                base: ObjectBase {
+                    obj_type: ObjectType::String,
+                    next_obj: last_allocated,
+                },
+                value: s.into().into_boxed_str(),
+            }
+        })
+    }
 
-        let obj = Object(NonNull::new((object as *mut StringObject).cast::<ObjectBase>()).unwrap());
+    /// Allocate a new `FunctionObject` in the `Heap`.
+    ///
+    /// # Panics
+    /// This function panics if the given `name` is not a reference to a
+    /// `StringObject`.
+    pub fn allocate_function(&mut self, name: Object, arity: u16, chunk: Chunk) -> Object {
+        assert!(name.is::<StringObject>());
 
-        // Update the linked list to contain the most recent `Object`
-        self.last_allocated = obj;
-
-        obj
+        self.allocate_object_with({
+            let last_allocated = self.last_allocated;
+            move || FunctionObject {
+                base: ObjectBase {
+                    obj_type: ObjectType::Function,
+                    next_obj: last_allocated,
+                },
+                name,
+                arity,
+                chunk,
+            }
+        })
     }
 
     /// Deallocate the memory backing the given `Object`.
@@ -248,6 +274,27 @@ impl HeapInner {
                 (
                     concrete_ptr.cast::<u8>(),
                     alloc::Layout::new::<StringObject>(),
+                )
+            },
+            ObjectType::Function => {
+                let concrete_ptr = object.0.cast::<FunctionObject>().as_ptr();
+
+                // The `name: Object` will be dropped, but this will not deallocate the memory
+                // back the `StringObject` it points to. The garbage collection
+                // (when implemented) will handle cleanup of the object.
+                //
+                // # Safety
+                //
+                // 1. `ptr.drop_in_place`
+                //   - ptr is valid for both read and write by construction in `allocate_with`
+                //   - ptr is aligned by construction in `allocate_with`
+                //   - FunctionObject behind ptr is valid for dropping, the chunk data must be
+                //     deallocated
+                unsafe { concrete_ptr.drop_in_place() };
+
+                (
+                    concrete_ptr.cast::<u8>(),
+                    alloc::Layout::new::<FunctionObject>(),
                 )
             },
         };
@@ -327,6 +374,10 @@ impl Object {
                 self_base.downcast_ref::<StringObject>().unwrap(),
                 f,
             ),
+            ObjectType::Function => <FunctionObject as fmt::Display>::fmt(
+                self_base.downcast_ref::<FunctionObject>().unwrap(),
+                f,
+            ),
         }
     }
 
@@ -340,10 +391,15 @@ impl Object {
                 self_base.downcast_ref::<StringObject>().unwrap(),
                 other_base.downcast_ref::<StringObject>().unwrap(),
             ),
+            (ObjectType::Function, ObjectType::Function) => <FunctionObject as PartialEq>::eq(
+                self_base.downcast_ref::<FunctionObject>().unwrap(),
+                other_base.downcast_ref::<FunctionObject>().unwrap(),
+            ),
+            _ => false,
         }
     }
 
-    /// Return `true` if this Object is a reference to the `T` supertype.
+    /// Return `true` if this Object is a reference to the `T` super-type.
     pub fn is<T: ConcreteObject>(&self) -> bool {
         self.read_base().obj_type == T::TYPE
     }
@@ -371,6 +427,12 @@ impl fmt::Display for Object {
 pub trait ConcreteObject: fmt::Display + PartialEq {
     /// The `ObjectType` of the `ConcreteObject`.
     const TYPE: ObjectType;
+
+    /// Take a mutable pointer to a `ConcreteObject` value, and produce an
+    /// `Object` that references that initial value
+    fn upcast(own: *mut Self) -> Object {
+        Object(NonNull::new(own.cast::<ObjectBase>()).unwrap())
+    }
 }
 
 /// The type of an Object
@@ -378,12 +440,15 @@ pub trait ConcreteObject: fmt::Display + PartialEq {
 pub enum ObjectType {
     /// The type of an Object that contains immutable text data
     String,
+    /// The type of an Object that represents a source code-defined function
+    Function,
 }
 
 impl ObjectType {
     fn to_str(&self) -> &'static str {
         match self {
             ObjectType::String => "string",
+            ObjectType::Function => "function",
         }
     }
 }
@@ -417,7 +482,7 @@ impl ObjectBase {
 }
 
 /// An immutable String object
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[repr(C)]
 pub struct StringObject {
     /// The base fields of the `StringObject`.
@@ -445,5 +510,35 @@ impl PartialEq for StringObject {
 impl PartialEq<str> for StringObject {
     fn eq(&self, other: &str) -> bool {
         self.value.as_ref().eq(other)
+    }
+}
+
+/// A function defined in the lox source code
+#[derive(Debug)]
+#[repr(C)]
+pub struct FunctionObject {
+    /// The base fields of the `FunctionObject`.
+    pub base: ObjectBase,
+    /// The number of function arguments
+    pub arity: u16,
+    /// The bytecode of the function
+    pub chunk: Chunk,
+    /// The function name
+    pub name: Object,
+}
+
+impl ConcreteObject for FunctionObject {
+    const TYPE: ObjectType = ObjectType::Function;
+}
+
+impl fmt::Display for FunctionObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<fn {}>", self.name)
+    }
+}
+
+impl PartialEq for FunctionObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.arity.eq(&other.arity) && self.name.eq(&other.name) && self.chunk.eq(&other.chunk)
     }
 }
