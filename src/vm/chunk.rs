@@ -76,12 +76,14 @@ impl Chunk {
                         OpCode::Constant
                         | OpCode::DefineGlobal
                         | OpCode::GetGlobal
-                        | OpCode::SetGlobal
-                        | OpCode::SetLocal
-                        | OpCode::GetLocal => {
+                        | OpCode::SetGlobal => {
                             let constant_idx = inst.arguments[0];
                             let constant_data = &self.constants[constant_idx as usize];
                             write!(output, "{} '{}'", constant_idx, constant_data)?;
+                        },
+                        OpCode::GetLocal | OpCode::SetLocal => {
+                            let local_idx = inst.arguments[0];
+                            write!(output, "{}", local_idx)?;
                         },
                         OpCode::Return
                         | OpCode::Add

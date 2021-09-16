@@ -11,7 +11,10 @@ use std::{
     convert::{TryFrom, TryInto},
     io::Write,
 };
-pub use value::{ConcreteObject, Heap, Object, ObjectBase, ObjectType, StringObject, Value};
+pub use value::{
+    ConcreteObject, FunctionObject, Heap, ObjectBase, ObjectRef, ObjectType, OpaqueObject,
+    StringObject, Value,
+};
 
 /// The virtual machine that executions `Instructions`
 ///
@@ -29,28 +32,51 @@ pub use value::{ConcreteObject, Heap, Object, ObjectBase, ObjectType, StringObje
 pub struct VM<'h, W: Write> {
     /// The stack of `Value`s.
     pub stack: Vec<Value>,
-    /// The currently executing chunk
-    pub chunk: Chunk,
     /// The standard out buffer, used to print things to screen
     pub stdout: W,
-    /// Instruction pointer
-    pub ip: *const u8,
+    /// The stack of functions being executed
+    pub frames: Vec<CallFrame>,
     /// The heap memory region, containing `Value`s separate from the stack.
     pub heap: &'h mut Heap,
     /// Current set of global variables
     pub globals: HashMap<String, Value>,
 }
 
+/// The call frame tracks the live information needed for executing a single
+/// function call
+#[derive(Debug)]
+pub struct CallFrame {
+    /// Instruction pointer
+    pub ip: *const u8,
+    /// The offset into the `stack` array this frame uses to access locals
+    pub stack_offset: usize,
+    /// The function being executed
+    pub function: ObjectRef<FunctionObject>,
+}
+
+impl CallFrame {
+    /// Create a new function call frame
+    pub fn new(function: ObjectRef<FunctionObject>, stack_offset: usize) -> Self {
+        let ip = function.chunk.first_instruction_pointer();
+        CallFrame {
+            ip,
+            stack_offset,
+            function,
+        }
+    }
+}
+
 impl<'h, W: Write> VM<'h, W> {
     /// Create a new `VM` with the given output and code `Chunk`.
-    pub fn new(stdout: W, chunk: Chunk, heap: &'h mut Heap) -> Self {
-        let ip = chunk.first_instruction_pointer();
+    pub fn new(stdout: W, script: ObjectRef<FunctionObject>, heap: &'h mut Heap) -> Self {
+        let stack = vec![script.to_opaque().into()];
+        let frames = vec![CallFrame::new(script, stack.len() - 1)];
+
         VM {
-            ip,
-            chunk,
             stdout,
             heap,
-            stack: Vec::new(),
+            frames,
+            stack,
             globals: HashMap::new(),
         }
     }
@@ -74,7 +100,13 @@ impl<'h, W: Write> VM<'h, W> {
     /// Safely execute the current `Chunk` to completion.
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
         // The `validate_instructions` will never return an empty list of errors
-        self.chunk.validate_instructions().map_err(|errs| errs[0])?;
+        self.frames
+            .last_mut()
+            .expect("frames vec should always be non-empty")
+            .function
+            .chunk
+            .validate_instructions()
+            .map_err(|errs| errs[0])?;
 
         let result = unsafe { self.interpret_inner_unchecked() };
 
@@ -118,16 +150,22 @@ impl<'h, W: Write> VM<'h, W> {
         }
 
         loop {
-            let (new_ip, inst) = unsafe { chunk::decode_instruction_at_unchecked(self.ip) };
-            self.ip = new_ip;
+            let current_frame = self
+                .frames
+                .last_mut()
+                .expect("frames vec should always be non-empty");
+            let (new_ip, inst) =
+                unsafe { chunk::decode_instruction_at_unchecked(current_frame.ip) };
+            current_frame.ip = new_ip;
 
             match inst.op {
                 OpCode::Constant => self
                     .stack
-                    .push(self.chunk.constants[inst.arguments[0] as usize]),
+                    .push(current_frame.function.chunk.constants[inst.arguments[0] as usize]),
                 OpCode::GetGlobal => {
                     // Read variable name from constants table
-                    let var_name = self.chunk.constants[inst.arguments[0] as usize]
+                    let var_name = current_frame.function.chunk.constants
+                        [inst.arguments[0] as usize]
                         .to_object_type::<StringObject>()
                         .expect("Unable to read `StringObject` from reference!");
 
@@ -140,7 +178,8 @@ impl<'h, W: Write> VM<'h, W> {
                 },
                 OpCode::SetGlobal => {
                     // Read variable name from constants table
-                    let var_name = self.chunk.constants[inst.arguments[0] as usize]
+                    let var_name = current_frame.function.chunk.constants
+                        [inst.arguments[0] as usize]
                         .to_object_type::<StringObject>()
                         .expect("Unable to read `StringObject` from reference!");
 
@@ -157,18 +196,19 @@ impl<'h, W: Write> VM<'h, W> {
                     // does not affect the stack.
                 },
                 OpCode::GetLocal => {
-                    let slot = inst.arguments[0] as usize;
+                    let slot = inst.arguments[0] as usize + current_frame.stack_offset;
                     let value = self.stack[slot];
                     self.stack.push(value);
                 },
                 OpCode::SetLocal => {
-                    let slot = inst.arguments[0] as usize;
+                    let slot = inst.arguments[0] as usize + current_frame.stack_offset;
                     let value = self.stack.last().cloned().unwrap();
                     self.stack[slot] = value;
                 },
                 OpCode::DefineGlobal => {
                     // Read variable name from constants table
-                    let var_name = self.chunk.constants[inst.arguments[0] as usize]
+                    let var_name = current_frame.function.chunk.constants
+                        [inst.arguments[0] as usize]
                         .to_object_type::<StringObject>()
                         .expect("Unable to read `StringObject` from reference!");
 
@@ -227,7 +267,7 @@ impl<'h, W: Write> VM<'h, W> {
                 },
                 OpCode::Return => {
                     // Just in case `interpret` is called again.
-                    self.ip = self.chunk.first_instruction_pointer();
+                    current_frame.ip = current_frame.function.chunk.first_instruction_pointer();
                     return Ok(());
                 },
                 OpCode::True => self.stack.push(true.into()),
@@ -259,7 +299,7 @@ impl<'h, W: Write> VM<'h, W> {
                         .read_u16_argument()
                         .expect("insufficient bytes to read u16");
                     if self.stack.last().map(|v| v.is_falsey()).unwrap_or(false) {
-                        self.ip = self
+                        current_frame.ip = current_frame
                             .ip
                             .offset(offset.try_into().expect("unable to convert u16 to isize"));
                     }
@@ -268,7 +308,7 @@ impl<'h, W: Write> VM<'h, W> {
                     let offset = inst
                         .read_u16_argument()
                         .expect("insufficient bytes to read u16");
-                    self.ip = self
+                    current_frame.ip = current_frame
                         .ip
                         .offset(offset.try_into().expect("unable to convert u16 to isize"));
                 },
@@ -276,7 +316,7 @@ impl<'h, W: Write> VM<'h, W> {
                     let offset = inst
                         .read_u16_argument()
                         .expect("insufficient bytes to read u16");
-                    self.ip = self.ip.offset(
+                    current_frame.ip = current_frame.ip.offset(
                         -(isize::try_from(offset).expect("unable to convert u16 to isize")),
                     );
                 },
@@ -297,92 +337,4 @@ pub enum RuntimeError {
     /// Attempted to read a global variable which did not exist
     #[error("undefined variable [{}]", .0)]
     UndefinedVariable(String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn small_calculations_run_twice() {
-        let mut heap = Heap::new();
-        let mut builder = ChunkBuilder::new(&heap);
-        builder.constant_inst(1.0, 1);
-        builder.constant_inst(2.0, 1);
-        builder.simple_inst(OpCode::Add, 1);
-        builder.constant_inst(6.0, 1);
-        builder.constant_inst(2.0, 1);
-        builder.simple_inst(OpCode::Divide, 1);
-        builder.simple_inst(OpCode::Multiply, 1);
-        builder.return_inst(1);
-
-        let chunk = builder.build().unwrap();
-        let mut vm = VM::new(Vec::new(), chunk, &mut heap);
-
-        vm.interpret().unwrap();
-
-        assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0], 9.0.into());
-
-        vm.interpret().unwrap();
-
-        assert_eq!(vm.stack.len(), 2);
-        assert_eq!(&vm.stack[..2], &[9.0.into(), 9.0.into()]);
-    }
-
-    #[test]
-    fn comparison_calculation() {
-        let mut heap = Heap::new();
-        let mut builder = ChunkBuilder::new(&heap);
-        builder.constant_inst(5.0, 1);
-        builder.constant_inst(4.0, 1);
-        builder.simple_inst(OpCode::Subtract, 1);
-        builder.constant_inst(3.0, 1);
-        builder.constant_inst(2.0, 1);
-        builder.simple_inst(OpCode::Multiply, 1);
-        builder.simple_inst(OpCode::Greater, 1);
-        builder.simple_inst(OpCode::Nil, 1);
-        builder.simple_inst(OpCode::Not, 1);
-        builder.simple_inst(OpCode::Equal, 1);
-        builder.simple_inst(OpCode::Not, 1);
-        builder.return_inst(1);
-
-        let chunk = builder.build().unwrap();
-        let mut vm = VM::new(Vec::new(), chunk, &mut heap);
-
-        vm.interpret().unwrap();
-
-        assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0], true.into());
-    }
-
-    #[test]
-    fn concatenation_calculation() {
-        let mut heap = Heap::new();
-        let chunk = {
-            let mut builder = ChunkBuilder::new(&heap);
-
-            builder.constant_string_inst("a", 1);
-            builder.constant_string_inst("b", 1);
-            builder.simple_inst(OpCode::Add, 1);
-            builder.constant_string_inst("c", 1);
-            builder.simple_inst(OpCode::Add, 1);
-            builder.return_inst(1);
-            builder.build().unwrap()
-        };
-
-        let mut vm = VM::new(Vec::new(), chunk, &mut heap);
-
-        vm.interpret().unwrap();
-
-        assert_eq!(vm.stack.len(), 1);
-        assert_eq!(
-            vm.stack[0]
-                .to_object_type::<StringObject>()
-                .unwrap()
-                .value
-                .as_ref(),
-            "abc"
-        );
-    }
 }

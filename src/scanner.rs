@@ -555,7 +555,7 @@ impl TryFrom<u8> for TokenType {
                 This, True, Var, While, Error,
             ];
 
-            Ok(LOOKUP[value as usize])
+            Ok(LOOKUP[usize::try_from(value).expect("unable to fit u8 value into usize index")])
         } else {
             Err(TokenTryFromError(value))
         }

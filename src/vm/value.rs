@@ -1,5 +1,5 @@
 use super::Chunk;
-use std::{alloc, cell::RefCell, fmt, ptr::NonNull};
+use std::{alloc, cell::RefCell, fmt, ops::Deref, ptr::NonNull};
 
 /// The value type of the virtual machine
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -11,7 +11,7 @@ pub enum Value {
     /// `true` or `false`
     Bool(bool),
     /// Any heap allocated value
-    Object(Object),
+    Object(OpaqueObject),
 }
 
 impl Value {
@@ -64,8 +64,8 @@ impl From<bool> for Value {
     }
 }
 
-impl From<Object> for Value {
-    fn from(src: Object) -> Self {
+impl From<OpaqueObject> for Value {
+    fn from(src: OpaqueObject) -> Self {
         Value::Object(src)
     }
 }
@@ -76,7 +76,7 @@ impl fmt::Display for Value {
             Value::Number(n) => <f64 as fmt::Display>::fmt(n, f),
             Value::Nil => write!(f, "nil"),
             Value::Bool(b) => <bool as fmt::Display>::fmt(b, f),
-            Value::Object(o) => <Object as fmt::Display>::fmt(o, f),
+            Value::Object(o) => <OpaqueObject as fmt::Display>::fmt(o, f),
         }
     }
 }
@@ -89,7 +89,7 @@ pub struct Heap(RefCell<HeapInner>);
 struct HeapInner {
     /// The head of a linked list containing all `Object`s allocated by this
     /// `Heap`.
-    pub last_allocated: Object,
+    pub last_allocated: OpaqueObject,
 }
 
 impl Heap {
@@ -114,10 +114,26 @@ impl Heap {
     }
 
     /// Allocate a new `StringObject` in the `Heap`.
-    pub fn allocate_string(&self, s: impl Into<String>) -> Object {
+    pub fn allocate_string(&self, s: impl Into<String>) -> OpaqueObject {
         let mut inner = self.0.borrow_mut();
 
         inner.allocate_string(s)
+    }
+
+    /// Allocate a new `FunctionObject` in the `Heap`.
+    ///
+    /// # Panics
+    /// This function panics if the given `name` is not a reference to a
+    /// `StringObject`.
+    pub fn allocate_function(
+        &self,
+        name: ObjectRef<StringObject>,
+        arity: u16,
+        chunk: Chunk,
+    ) -> OpaqueObject {
+        let mut inner = self.0.borrow_mut();
+
+        inner.allocate_function(name, arity, chunk)
     }
 }
 
@@ -125,7 +141,7 @@ impl HeapInner {
     /// Create a new, empty `Heap`.
     fn new() -> Self {
         HeapInner {
-            last_allocated: Object::dangling(),
+            last_allocated: OpaqueObject::dangling(),
         }
     }
 
@@ -143,7 +159,7 @@ impl HeapInner {
         // Set the `last_allocated` to dangling before looping through so that any
         // errors/panics will only leak memory, not leave deallocated `Object`s in the
         // list.
-        self.last_allocated = Object::dangling();
+        self.last_allocated = OpaqueObject::dangling();
 
         while current.0 != NonNull::dangling() {
             // # Safety
@@ -203,7 +219,7 @@ impl HeapInner {
         }
     }
 
-    fn allocate_object_with<T: ConcreteObject>(&mut self, f: impl FnOnce() -> T) -> Object {
+    fn allocate_object_with<T: ConcreteObject>(&mut self, f: impl FnOnce() -> T) -> OpaqueObject {
         let object = self.allocate_with(f);
         let object = T::upcast(object);
         self.last_allocated = object;
@@ -211,7 +227,7 @@ impl HeapInner {
     }
 
     /// Allocate a new `StringObject` in the `Heap`.
-    pub fn allocate_string(&mut self, s: impl Into<String>) -> Object {
+    pub fn allocate_string(&mut self, s: impl Into<String>) -> OpaqueObject {
         self.allocate_object_with({
             let last_allocated = self.last_allocated;
             move || StringObject {
@@ -229,9 +245,12 @@ impl HeapInner {
     /// # Panics
     /// This function panics if the given `name` is not a reference to a
     /// `StringObject`.
-    pub fn allocate_function(&mut self, name: Object, arity: u16, chunk: Chunk) -> Object {
-        assert!(name.is::<StringObject>());
-
+    pub fn allocate_function(
+        &mut self,
+        name: ObjectRef<StringObject>,
+        arity: u16,
+        chunk: Chunk,
+    ) -> OpaqueObject {
         self.allocate_object_with({
             let last_allocated = self.last_allocated;
             move || FunctionObject {
@@ -257,7 +276,7 @@ impl HeapInner {
     /// It is the responsibility of the caller to ensure that either:
     ///   - the given `Object` is the only copy pointing to the memory
     ///   - OR all other copies will never be read from again
-    unsafe fn deallocate_object(&self, object: Object) {
+    unsafe fn deallocate_object(&self, object: OpaqueObject) {
         let (ptr, layout) = match object.read_base().obj_type {
             ObjectType::String => {
                 let concrete_ptr = object.0.cast::<StringObject>().as_ptr();
@@ -282,7 +301,7 @@ impl HeapInner {
                 // The `name: Object` will be dropped, but this will not deallocate the memory
                 // back the `StringObject` it points to. The garbage collection
                 // (when implemented) will handle cleanup of the object.
-                //
+
                 // # Safety
                 //
                 // 1. `ptr.drop_in_place`
@@ -338,13 +357,67 @@ impl Drop for HeapInner {
     }
 }
 
+/// A non-opaque object reference.
+///
+/// This is derived from an `OpaqueObject` reference after asserting the
+/// type of the contained object
+#[derive(Debug)]
+pub struct ObjectRef<T>(NonNull<T>);
+
+impl<T: ConcreteObject> ObjectRef<T> {
+    /// Returns some reference to the inner object
+    pub fn read(&self) -> &T {
+        // # Safety
+        //
+        // 1. `ptr.as_ref`
+        //   - ptr is properly aligned, dereferenceable, & initialized, ensured by
+        //     `allocate_with`
+        //   - aliasing rules are obeyed, as it is currently impossible to obtain a
+        //     mutable reference to the object
+        unsafe { self.0.as_ref() }
+    }
+
+    /// Cast object reference back to an opaque version, losing type information
+    pub fn to_opaque(self) -> OpaqueObject {
+        OpaqueObject(self.0.cast::<ObjectBase>())
+    }
+}
+
+impl<T: ConcreteObject> Copy for ObjectRef<T> {}
+
+impl<T: ConcreteObject> Clone for ObjectRef<T> {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
+impl<T: ConcreteObject> Deref for ObjectRef<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.read()
+    }
+}
+
+impl<T: ConcreteObject> PartialEq for ObjectRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.read().eq(other.read())
+    }
+}
+
+impl<T: ConcreteObject> fmt::Display for ObjectRef<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.read().fmt(f)
+    }
+}
+
 /// An opaque object reference.
 #[derive(Debug, Copy, Clone)]
-pub struct Object(NonNull<ObjectBase>);
+pub struct OpaqueObject(NonNull<ObjectBase>);
 
-impl Object {
+impl OpaqueObject {
     fn dangling() -> Self {
-        Object(NonNull::dangling())
+        OpaqueObject(NonNull::dangling())
     }
 
     fn read_base(&self) -> &ObjectBase {
@@ -404,19 +477,30 @@ impl Object {
         self.read_base().obj_type == T::TYPE
     }
 
+    /// Create a non-opaque object reference that will eliminate future type
+    /// assertions, if the type of the referenced object matches the given
+    /// concrete type.
+    pub fn cast<T: ConcreteObject>(&self) -> Option<ObjectRef<T>> {
+        if self.read_base().obj_type == T::TYPE {
+            Some(ObjectRef(self.0.cast::<T>()))
+        } else {
+            None
+        }
+    }
+
     /// Return a static string which roughly represent the type of the object
     pub(crate) fn type_str(&self) -> &'static str {
         self.read_base().obj_type.to_str()
     }
 }
 
-impl PartialEq for Object {
+impl PartialEq for OpaqueObject {
     fn eq(&self, other: &Self) -> bool {
         self.partial_eq(other)
     }
 }
 
-impl fmt::Display for Object {
+impl fmt::Display for OpaqueObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.display_fmt(f)
     }
@@ -430,8 +514,8 @@ pub trait ConcreteObject: fmt::Display + PartialEq {
 
     /// Take a mutable pointer to a `ConcreteObject` value, and produce an
     /// `Object` that references that initial value
-    fn upcast(own: *mut Self) -> Object {
-        Object(NonNull::new(own.cast::<ObjectBase>()).unwrap())
+    fn upcast(own: *mut Self) -> OpaqueObject {
+        OpaqueObject(NonNull::new(own.cast::<ObjectBase>()).unwrap())
     }
 }
 
@@ -461,7 +545,7 @@ pub struct ObjectBase {
     pub obj_type: ObjectType,
     /// The last allocated `Object` prior to this one, part of the linked list
     /// containing all `Object`s allocated by the same `Heap`.
-    pub next_obj: Object,
+    pub next_obj: OpaqueObject,
 }
 
 impl ObjectBase {
@@ -524,7 +608,7 @@ pub struct FunctionObject {
     /// The bytecode of the function
     pub chunk: Chunk,
     /// The function name
-    pub name: Object,
+    pub name: ObjectRef<StringObject>,
 }
 
 impl ConcreteObject for FunctionObject {

@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use super::{Compiler, CompilerError, Precedence, VariableRef};
 use crate::{
     parser::synchronize,
@@ -38,7 +40,9 @@ pub fn var_declaration(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<
     if c.cursor.advance_if(&[TokenType::Equal][..]).is_some() {
         expression(c)?;
     } else {
-        c.current.simple_inst(OpCode::Nil, line_number as usize);
+        c.current
+            .chunk
+            .simple_inst(OpCode::Nil, line_number as usize);
     }
 
     // Expected semicolon
@@ -80,7 +84,9 @@ pub fn print_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<
     expression(c)?;
     c.cursor
         .consume(TokenType::Semicolon, "expected ';' after value")?;
-    c.current.simple_inst(OpCode::Print, line_number as usize);
+    c.current
+        .chunk
+        .simple_inst(OpCode::Print, line_number as usize);
 
     Ok(())
 }
@@ -90,7 +96,7 @@ pub fn print_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<
 pub fn while_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<(), CompilerError> {
     let while_line_number = c.cursor.previous().unwrap().span.line();
 
-    let loop_start = c.current.prepare_loop();
+    let loop_start = c.current.chunk.prepare_loop();
 
     c.cursor
         .consume(TokenType::LeftParen, "expected '(' after 'while'")?;
@@ -100,17 +106,19 @@ pub fn while_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<
 
     let exit_patch = c
         .current
+        .chunk
         .jump_inst(OpCode::JumpIfFalse, while_line_number as usize);
 
     c.current
+        .chunk
         .simple_inst(OpCode::Pop, while_line_number as usize);
     statement(c)?;
-    let while_end_line_number = c.current.get_last_line();
-    c.current.loop_inst(loop_start, while_end_line_number);
+    let while_end_line_number = c.current.chunk.get_last_line();
+    c.current.chunk.loop_inst(loop_start, while_end_line_number);
 
-    c.current.complete_patch(exit_patch);
-    let exit_line_number = c.current.get_last_line();
-    c.current.simple_inst(OpCode::Pop, exit_line_number);
+    c.current.chunk.complete_patch(exit_patch);
+    let exit_line_number = c.current.chunk.get_last_line();
+    c.current.chunk.simple_inst(OpCode::Pop, exit_line_number);
 
     Ok(())
 }
@@ -145,7 +153,7 @@ pub fn for_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<()
         err_end_scope!(c, expression_statement(c));
     }
 
-    let loop_patch = c.current.prepare_loop();
+    let loop_patch = c.current.chunk.prepare_loop();
     // condition statement, ex: `idx < item.length()`
     let exit_patch = if c.cursor.advance_if(&[TokenType::Semicolon][..]).is_none() {
         err_end_scope!(c, expression(c));
@@ -158,8 +166,11 @@ pub fn for_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<()
         let condition_line_number = c.cursor.previous().unwrap().span.line() as usize;
         let exit_patch = c
             .current
+            .chunk
             .jump_inst(OpCode::JumpIfFalse, condition_line_number);
-        c.current.simple_inst(OpCode::Pop, condition_line_number);
+        c.current
+            .chunk
+            .simple_inst(OpCode::Pop, condition_line_number);
 
         tracing::debug!(
             ?condition_line_number,
@@ -175,19 +186,19 @@ pub fn for_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<()
     // update statement, ex: `idx = idx + 1`
     let updated_loop_patch = if c.cursor.advance_if(&[TokenType::RightParen][..]).is_none() {
         let update_line_number = c.cursor.previous().unwrap().span.line() as usize;
-        let body_patch = c.current.jump_inst(OpCode::Jump, update_line_number);
-        let updated_loop_patch = c.current.prepare_loop();
+        let body_patch = c.current.chunk.jump_inst(OpCode::Jump, update_line_number);
+        let updated_loop_patch = c.current.chunk.prepare_loop();
 
         err_end_scope!(c, expression(c));
-        c.current.simple_inst(OpCode::Pop, update_line_number);
+        c.current.chunk.simple_inst(OpCode::Pop, update_line_number);
         err_end_scope!(
             c,
             c.cursor
                 .consume(TokenType::RightParen, "expected ')' after for clauses")
         );
 
-        c.current.loop_inst(loop_patch, update_line_number);
-        c.current.complete_patch(body_patch);
+        c.current.chunk.loop_inst(loop_patch, update_line_number);
+        c.current.chunk.complete_patch(body_patch);
 
         tracing::debug!(
             ?updated_loop_patch,
@@ -201,13 +212,17 @@ pub fn for_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<()
     };
 
     err_end_scope!(c, statement(c));
-    let for_end_line_number = c.current.get_last_line();
-    c.current.loop_inst(updated_loop_patch, for_end_line_number);
+    let for_end_line_number = c.current.chunk.get_last_line();
+    c.current
+        .chunk
+        .loop_inst(updated_loop_patch, for_end_line_number);
 
     if let Some(exit_patch) = exit_patch {
         tracing::debug!(?exit_patch, "completing exit patch");
-        c.current.complete_patch(exit_patch);
-        c.current.simple_inst(OpCode::Pop, for_end_line_number);
+        c.current.chunk.complete_patch(exit_patch);
+        c.current
+            .chunk
+            .simple_inst(OpCode::Pop, for_end_line_number);
     }
 
     c.end_scope();
@@ -227,31 +242,38 @@ pub fn if_statement(c: &mut Compiler<impl Iterator<Item = Token>>) -> Result<(),
 
     let then_patch = c
         .current
+        .chunk
         .jump_inst(OpCode::JumpIfFalse, if_line_number as usize);
 
     // used to clear the stack from the result of the condition
-    c.current.simple_inst(OpCode::Pop, if_line_number as usize);
+    c.current
+        .chunk
+        .simple_inst(OpCode::Pop, if_line_number as usize);
     // "then" branch - the condition was true
     statement(c)?;
 
     // This jump is unconditional so that if there is an `else` branch we can jump
     // directly to it. Otherwise, we just jump to the next instruction, basically a
     // no-op
-    let then_branch_last_line = c.current.get_last_line();
-    let else_patch = c.current.jump_inst(OpCode::Jump, then_branch_last_line);
+    let then_branch_last_line = c.current.chunk.get_last_line();
+    let else_patch = c
+        .current
+        .chunk
+        .jump_inst(OpCode::Jump, then_branch_last_line);
 
-    c.current.complete_patch(then_patch);
+    c.current.chunk.complete_patch(then_patch);
 
     if c.cursor.advance_if(&[TokenType::Else][..]).is_some() {
         let else_line_number = c.cursor.previous().unwrap().span.line();
         // used to clear the stack from the result of the condition
         c.current
+            .chunk
             .simple_inst(OpCode::Pop, else_line_number as usize);
         // "else" branch - the condition was false
         statement(c)?;
     }
 
-    c.current.complete_patch(else_patch);
+    c.current.chunk.complete_patch(else_patch);
 
     Ok(())
 }
@@ -266,6 +288,7 @@ pub fn expression_statement(
         .cursor
         .consume(TokenType::Semicolon, "expected ';' after value")?;
     c.current
+        .chunk
         .simple_inst(OpCode::Pop, semi_tok.span.line() as usize);
 
     Ok(())
@@ -316,6 +339,7 @@ pub fn number(
     };
 
     c.current
+        .chunk
         .constant_inst(value, num_token.span.line() as usize);
 
     Ok(())
@@ -340,7 +364,7 @@ pub fn literal(
         _ => unreachable!(),
     };
 
-    c.current.simple_inst(op, line_number as usize);
+    c.current.chunk.simple_inst(op, line_number as usize);
 
     Ok(())
 }
@@ -375,11 +399,11 @@ pub fn unary(
 
     match prev_token.r#type {
         TokenType::Minus => {
-            c.current.simple_inst(OpCode::Negate, line_number);
+            c.current.chunk.simple_inst(OpCode::Negate, line_number);
             Ok(())
         },
         TokenType::Bang => {
-            c.current.simple_inst(OpCode::Not, line_number);
+            c.current.chunk.simple_inst(OpCode::Not, line_number);
             Ok(())
         },
         x => Err(CompilerError::UnexpectedToken {
@@ -404,37 +428,37 @@ where
 
     match prev_token.r#type {
         TokenType::Plus => {
-            c.current.simple_inst(OpCode::Add, line_number);
+            c.current.chunk.simple_inst(OpCode::Add, line_number);
         },
         TokenType::Minus => {
-            c.current.simple_inst(OpCode::Subtract, line_number);
+            c.current.chunk.simple_inst(OpCode::Subtract, line_number);
         },
         TokenType::Star => {
-            c.current.simple_inst(OpCode::Multiply, line_number);
+            c.current.chunk.simple_inst(OpCode::Multiply, line_number);
         },
         TokenType::Slash => {
-            c.current.simple_inst(OpCode::Divide, line_number);
+            c.current.chunk.simple_inst(OpCode::Divide, line_number);
         },
         TokenType::EqualEqual => {
-            c.current.simple_inst(OpCode::Equal, line_number);
+            c.current.chunk.simple_inst(OpCode::Equal, line_number);
         },
         TokenType::BangEqual => {
-            c.current.simple_inst(OpCode::Equal, line_number);
-            c.current.simple_inst(OpCode::Not, line_number);
+            c.current.chunk.simple_inst(OpCode::Equal, line_number);
+            c.current.chunk.simple_inst(OpCode::Not, line_number);
         },
         TokenType::Greater => {
-            c.current.simple_inst(OpCode::Greater, line_number);
+            c.current.chunk.simple_inst(OpCode::Greater, line_number);
         },
         TokenType::GreaterEqual => {
-            c.current.simple_inst(OpCode::Less, line_number);
-            c.current.simple_inst(OpCode::Not, line_number);
+            c.current.chunk.simple_inst(OpCode::Less, line_number);
+            c.current.chunk.simple_inst(OpCode::Not, line_number);
         },
         TokenType::Less => {
-            c.current.simple_inst(OpCode::Less, line_number);
+            c.current.chunk.simple_inst(OpCode::Less, line_number);
         },
         TokenType::LessEqual => {
-            c.current.simple_inst(OpCode::Greater, line_number);
-            c.current.simple_inst(OpCode::Not, line_number);
+            c.current.chunk.simple_inst(OpCode::Greater, line_number);
+            c.current.chunk.simple_inst(OpCode::Not, line_number);
         },
         x => {
             return Err(CompilerError::UnexpectedToken {
@@ -459,15 +483,21 @@ pub fn variable(
 
     let (get_op, set_op, argument) = match variable_ref {
         VariableRef::Global(global_idx) => (OpCode::GetGlobal, OpCode::SetGlobal, global_idx),
-        VariableRef::Local(local_idx) => (OpCode::GetLocal, OpCode::SetLocal, local_idx as u8),
+        VariableRef::Local(local_idx) => (
+            OpCode::GetLocal,
+            OpCode::SetLocal,
+            local_idx
+                .try_into()
+                .expect("local index could not fit into u8 value"),
+        ),
     };
 
     if can_assign && c.cursor.advance_if(&[TokenType::Equal][..]).is_some() {
         expression(c)?;
 
-        c.current.variable_inst(set_op, argument, line_number);
+        c.current.chunk.variable_inst(set_op, argument, line_number);
     } else {
-        c.current.variable_inst(get_op, argument, line_number);
+        c.current.chunk.variable_inst(get_op, argument, line_number);
     }
 
     Ok(())
@@ -484,7 +514,9 @@ pub fn string(
 
     match tok.literal.as_ref().unwrap() {
         Literal::String(s) => {
-            c.current.constant_string_inst(s.to_string(), line_number);
+            c.current
+                .chunk
+                .constant_string_inst(s.to_string(), line_number);
         },
         // This branch should never run because the `parse_precedence` should never dispatch to this
         // function (`literal`) unless the previous `TokenType` is `TokenType::String` and the
@@ -504,12 +536,15 @@ pub fn and(
     let line_number = c.cursor.previous().unwrap().span.line();
     let end_patch = c
         .current
+        .chunk
         .jump_inst(OpCode::JumpIfFalse, line_number as usize);
 
-    c.current.simple_inst(OpCode::Pop, line_number as usize);
+    c.current
+        .chunk
+        .simple_inst(OpCode::Pop, line_number as usize);
     parse_precedence(c, Precedence::And)?;
 
-    c.current.complete_patch(end_patch);
+    c.current.chunk.complete_patch(end_patch);
 
     Ok(())
 }
@@ -523,14 +558,20 @@ pub fn or(
     let line_number = c.cursor.previous().unwrap().span.line();
     let else_patch = c
         .current
+        .chunk
         .jump_inst(OpCode::JumpIfFalse, line_number as usize);
-    let end_patch = c.current.jump_inst(OpCode::Jump, line_number as usize);
+    let end_patch = c
+        .current
+        .chunk
+        .jump_inst(OpCode::Jump, line_number as usize);
 
-    c.current.complete_patch(else_patch);
-    c.current.simple_inst(OpCode::Pop, line_number as usize);
+    c.current.chunk.complete_patch(else_patch);
+    c.current
+        .chunk
+        .simple_inst(OpCode::Pop, line_number as usize);
 
     parse_precedence(c, Precedence::Or)?;
-    c.current.complete_patch(end_patch);
+    c.current.chunk.complete_patch(end_patch);
 
     Ok(())
 }

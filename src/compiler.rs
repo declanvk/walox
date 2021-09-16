@@ -3,10 +3,12 @@
 mod parse;
 mod precedence;
 
+use std::convert::TryInto;
+
 use crate::{
     scanner::{Cursor, MissingTokenError, ScanError, Token, TokenType},
     util::drain_filter,
-    vm::{Chunk, ChunkBuilder, ChunkError, Heap, OpCode},
+    vm::{ChunkBuilder, ChunkError, FunctionObject, Heap, ObjectRef, OpCode, StringObject},
 };
 pub use parse::{
     and, binary, block_statement, declaration, expression, grouping, if_statement, literal, number,
@@ -16,34 +18,103 @@ pub use precedence::Precedence;
 use smol_str::SmolStr;
 
 /// A single-pass compiler into `lox` bytecode.
-pub struct Compiler<'h, I: Iterator<Item = Token>> {
+pub struct Compiler<'h, 'p, I: Iterator<Item = Token>> {
     /// The stream of token from the source code.
     pub cursor: Cursor<I>,
     /// The chunk being built.
-    pub current: ChunkBuilder<'h>,
+    pub current: FunctionBuilder<'h, 'p>,
+}
+
+/// A container for a `FunctionObject` in the process of being compiled.
+pub struct FunctionBuilder<'h, 'p> {
+    /// The type of the function being built
+    pub fn_type: FunctionType,
+    /// The parent function of this function or None if this is
+    /// `FunctionType::Script`.
+    pub enclosing: Option<&'p FunctionBuilder<'h, 'p>>,
+    /// The chunk being built.
+    pub chunk: ChunkBuilder<'h>,
     /// The set of local variables in scope
     pub locals: Vec<LocalVariable>,
     /// How many scopes deep the compiler currently is
     pub scope_depth: usize,
+    /// The function name
+    pub name: ObjectRef<StringObject>,
+    /// The number of input parameters for this function
+    pub arity: u16,
+
+    heap: &'h Heap,
 }
 
-impl<'h, I> Compiler<'h, I>
+impl<'h, 'p> FunctionBuilder<'h, 'p> {
+    /// Create a new context for constructing functions
+    ///
+    /// # Panics
+    /// Panics if the given `name` is not a pointer to a `StringObject`.
+    pub fn new(heap: &'h Heap, fn_type: FunctionType, name: ObjectRef<StringObject>) -> Self {
+        FunctionBuilder {
+            fn_type,
+            enclosing: None,
+            chunk: ChunkBuilder::new(heap),
+            // initialize the locals stack with a reserved slot for ____ purpose
+            locals: vec![LocalVariable {
+                depth: None,
+                name: "".into(),
+            }],
+            scope_depth: 0,
+            arity: 0,
+            heap,
+            name,
+        }
+    }
+
+    /// Finalize the function being constructed and return an `Object` pointing
+    /// to the function
+    pub fn build(mut self, last_line: usize) -> Result<ObjectRef<FunctionObject>, CompilerError> {
+        self.chunk.return_inst(last_line);
+
+        let chunk = self.chunk.build()?;
+
+        Ok(self
+            .heap
+            .allocate_function(self.name, self.arity, chunk)
+            .cast()
+            .unwrap())
+    }
+}
+
+/// The type of function being compiled
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FunctionType {
+    /// A function that encapsulates all the top-level code in the source file
+    Script,
+    /// A function that is defined within the source file as a function
+    /// declaration or method
+    Function,
+}
+
+impl<'h, I> Compiler<'h, '_, I>
 where
     I: Iterator<Item = Token>,
 {
     /// Create a new compiler for the given source of tokens.
     pub fn new(tokens: I, heap: &'h Heap) -> Self {
+        // This function should be called a minimal number of times, so we won't have
+        // too many instances of the "script" string on the heap.
+        let top_level_name = heap
+            .allocate_string("script")
+            .cast::<StringObject>()
+            .unwrap();
+
         Compiler {
             cursor: Cursor::new(tokens),
-            current: ChunkBuilder::new(heap),
-            locals: Vec::new(),
-            scope_depth: 0,
+            current: FunctionBuilder::new(heap, FunctionType::Script, top_level_name),
         }
     }
 
     /// Start a new scope
     pub fn begin_scope(&mut self) {
-        self.scope_depth += 1;
+        self.current.scope_depth += 1;
     }
 
     /// End the current scope and emit instructions to clean up all local
@@ -52,12 +123,12 @@ where
     /// # Panics
     /// This function will panic if called without a matching `begin_scope`.
     pub fn end_scope(&mut self) {
-        self.scope_depth -= 1;
+        self.current.scope_depth -= 1;
 
-        let last_line = self.current.get_last_line();
-        let current_depth = self.scope_depth;
-        let current_chunk = &mut self.current;
-        drain_filter::rev_drain_filter(&mut self.locals, |local| {
+        let last_line = self.current.chunk.get_last_line();
+        let current_depth = self.current.scope_depth;
+        let current_chunk = &mut self.current.chunk;
+        drain_filter::rev_drain_filter(&mut self.current.locals, |local| {
             local.depth.unwrap_or(0) > current_depth
         })
         .for_each(|_| {
@@ -69,14 +140,13 @@ where
     ///
     /// This is opposed to a block or nested block scope.
     pub fn is_global_scope(&self) -> bool {
-        self.scope_depth == 0
+        self.current.scope_depth == 0
     }
 
     /// Declare a new variable in the current scope and prepare for later
     /// initialization.
     ///    1. Global: create a new string value in the current chunk constant
     /// table
-    ///
     ///    2. Local: create a new local variable object and check for
     /// name clash
     pub fn declare_variable(&mut self, name: SmolStr) -> Result<VariableRef, CompilerError> {
@@ -84,14 +154,14 @@ where
             // Create a new string in the global constant table to represent the name of the
             // global variable
             Ok(VariableRef::Global(
-                self.current.define_global_variable(name),
+                self.current.chunk.define_global_variable(name),
             ))
         } else {
             // Check that there are no existing variables with the same name in the same
             // local scope. This does not apply to globals because global variables are
             // allowed to redeclare
-            for local in &self.locals {
-                if local.depth.is_some() && local.depth.unwrap() < self.scope_depth {
+            for local in &self.current.locals {
+                if local.depth.is_some() && local.depth.unwrap() < self.current.scope_depth {
                     break;
                 }
 
@@ -100,25 +170,27 @@ where
                 }
             }
 
-            self.locals.push(LocalVariable { name, depth: None });
+            self.current
+                .locals
+                .push(LocalVariable { name, depth: None });
 
-            Ok(VariableRef::Local(self.locals.len() - 1))
+            Ok(VariableRef::Local(self.current.locals.len() - 1))
         }
     }
 
     /// For an already declared variable in the current scope:
     ///   1. Global: emit a new instruction which defines the global variable
-    ///
     ///   2. Local: finalize the local variable depth information
     pub fn define_variable(&mut self, variable: VariableRef, line_number: usize) {
         match variable {
             VariableRef::Global(global_idx) => {
                 // Write variable name and global def instruction to chunk
                 self.current
+                    .chunk
                     .variable_inst(OpCode::DefineGlobal, global_idx, line_number);
             },
             VariableRef::Local(local_idx) => {
-                self.locals[local_idx].depth = Some(self.scope_depth);
+                self.current.locals[local_idx].depth = Some(self.current.scope_depth);
             },
         }
     }
@@ -132,6 +204,7 @@ where
     /// actually exists.
     pub fn resolve_variable(&mut self, name: SmolStr) -> VariableRef {
         let local_idx = self
+            .current
             .locals
             .iter()
             .enumerate()
@@ -141,7 +214,7 @@ where
         if let Some(local_idx) = local_idx {
             VariableRef::Local(local_idx)
         } else {
-            let global_idx = self.current.define_global_variable(name);
+            let global_idx = self.current.chunk.define_global_variable(name);
 
             VariableRef::Global(global_idx)
         }
@@ -224,7 +297,7 @@ pub enum CompilerError {
 pub fn compile(
     tokens: impl IntoIterator<Item = Token>,
     heap: &Heap,
-) -> Result<Chunk, Vec<CompilerError>> {
+) -> Result<ObjectRef<FunctionObject>, Vec<CompilerError>> {
     let mut compiler = Compiler::new(tokens.into_iter(), heap);
     let mut errors = Vec::new();
 
@@ -245,12 +318,11 @@ pub fn compile(
             .previous()
             .map(|prev| prev.span.line())
             .unwrap_or(0);
-        compiler.current.return_inst(last_line as usize);
 
-        match compiler.current.build() {
-            Ok(c) => Ok(c),
-            Err(e) => {
-                errors.push(e.into());
+        match compiler.current.build(last_line.try_into().unwrap()) {
+            Ok(f) => Ok(f),
+            Err(err) => {
+                errors.push(err);
 
                 Err(errors)
             },
@@ -294,10 +366,11 @@ mod tests {
 
         expression(&mut compiler).expect("unable to parse expression from tokens");
 
-        compiler.current.return_inst(1);
+        compiler.current.chunk.return_inst(1);
 
         let chunk = compiler
             .current
+            .chunk
             .build()
             .expect("unable to build compiled chunk");
 

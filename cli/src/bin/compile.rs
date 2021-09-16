@@ -54,7 +54,7 @@ fn run(file_path: impl AsRef<Path>, should_dump: bool, should_interpret: bool) -
     let file_contents = fs::read_to_string(file_path).expect("Failed to read file");
     let scanner = Scanner::new(file_contents.as_str());
     let mut heap = Heap::new();
-    let chunk = match compile(scanner, &heap) {
+    let script = match compile(scanner, &heap) {
         Ok(c) => c,
         Err(e) => {
             for err in e {
@@ -72,14 +72,15 @@ fn run(file_path: impl AsRef<Path>, should_dump: bool, should_interpret: bool) -
             .expect("unable to extract file stem")
             .to_string_lossy();
 
-        chunk
+        script
+            .chunk
             .write_disassembled(&mut stdout, Some(chunk_name.as_ref()))
             .expect("unable to output chunk");
     }
 
     if should_interpret {
         let mut stdout = io::stdout();
-        let mut vm = VM::new(&mut stdout, chunk, &mut heap);
+        let mut vm = VM::new(&mut stdout, script, &mut heap);
         let interp_result = vm.interpret();
         stdout.flush().expect("Unable to flush stdout");
 
