@@ -9,10 +9,12 @@ pub use num_cpus;
 pub use regex;
 use std::{
     any::Any,
+    convert::TryInto,
     fmt::Display,
     io,
     ops::Deref,
-    panic::{catch_unwind, UnwindSafe}, convert::TryInto, path::PathBuf
+    panic::{catch_unwind, UnwindSafe},
+    path::PathBuf,
 };
 pub use threadpool;
 pub use tracing_subscriber;
@@ -24,7 +26,10 @@ pub mod filecheck_helpers;
 pub fn get_workspace_root() -> anyhow::Result<PathBuf> {
     let metadata = cargo_metadata::MetadataCommand::new().exec()?;
 
-    metadata.workspace_root.try_into().map_err(anyhow::Error::from)
+    metadata
+        .workspace_root
+        .try_into()
+        .map_err(anyhow::Error::from)
 }
 
 /// Take an `Any` trait object and attempt to cast it to some form of string.

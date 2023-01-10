@@ -25,7 +25,7 @@ impl Chunk {
         name: Option<&str>,
     ) -> io::Result<()> {
         if let Some(name) = name {
-            writeln!(output, "== {} ==", name)?
+            writeln!(output, "== {name} ==")?
         } else {
             writeln!(output, "======")?
         }
@@ -41,14 +41,14 @@ impl Chunk {
         let mut last_line = 0;
 
         for (offset, inst) in self {
-            write!(output, "{:0>4} ", offset)?;
+            write!(output, "{offset:0>4} ")?;
 
             let line_num = full_line_numbers[offset];
             if offset > 0 && line_num == last_line {
                 write!(output, "   | ")?;
             } else {
                 last_line = line_num;
-                write!(output, "{:>4} ", line_num)?;
+                write!(output, "{line_num:>4} ")?;
             }
 
             match inst {
@@ -71,7 +71,7 @@ impl Chunk {
                             // byte, 2 argument bytes)
                             let jump_destination =
                                 ((offset as isize) + 3 + sign * (jump as isize)) as usize;
-                            write!(output, "{:4} -> {:4}", offset, jump_destination)?;
+                            write!(output, "{offset:4} -> {jump_destination:4}")?;
                         },
                         OpCode::Constant
                         | OpCode::DefineGlobal
@@ -79,11 +79,11 @@ impl Chunk {
                         | OpCode::SetGlobal => {
                             let constant_idx = inst.arguments[0];
                             let constant_data = &self.constants[constant_idx as usize];
-                            write!(output, "{} '{}'", constant_idx, constant_data)?;
+                            write!(output, "{constant_idx} '{constant_data}'")?;
                         },
                         OpCode::GetLocal | OpCode::SetLocal => {
                             let local_idx = inst.arguments[0];
-                            write!(output, "{}", local_idx)?;
+                            write!(output, "{local_idx}")?;
                         },
                         OpCode::Return
                         | OpCode::Add
@@ -103,7 +103,7 @@ impl Chunk {
                     }
                 },
                 Err(err) => {
-                    write!(output, "{}", err)?;
+                    write!(output, "{err}")?;
                 },
             }
 
@@ -407,7 +407,7 @@ impl<'h> ChunkBuilder<'h> {
         self.write_line_number(line_number, 2);
         let constant_idx = self.write_constant(value);
         self.instructions.push(OpCode::Constant.into());
-        self.instructions.push(constant_idx as u8);
+        self.instructions.push(constant_idx);
     }
 
     /// Allocate a new constant `StringObject` and write a new

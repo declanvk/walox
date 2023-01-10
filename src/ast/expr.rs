@@ -300,9 +300,9 @@ pub enum LiteralExpr {
 impl fmt::Display for LiteralExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LiteralExpr::Boolean(b) => write!(f, "{}", b),
-            LiteralExpr::Number(n) => write!(f, "{}", n),
-            LiteralExpr::String(s) => write!(f, "\"{}\"", s),
+            LiteralExpr::Boolean(b) => write!(f, "{b}"),
+            LiteralExpr::Number(n) => write!(f, "{n}"),
+            LiteralExpr::String(s) => write!(f, "\"{s}\""),
             LiteralExpr::Null => write!(f, "nil"),
         }
     }
@@ -377,7 +377,7 @@ impl fmt::Display for UnaryOpKind {
             UnaryOpKind::Not => "!",
         };
 
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
