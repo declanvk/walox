@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"walox":[["impl&lt;'d&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.66.0/core/iter/traits/collect/trait.IntoIterator.html\" title=\"trait core::iter::traits::collect::IntoIterator\">IntoIterator</a> for &amp;'d <a class=\"struct\" href=\"walox/vm/struct.Chunk.html\" title=\"struct walox::vm::Chunk\">Chunk</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

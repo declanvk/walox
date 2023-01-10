@@ -1,0 +1,354 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `test_util/src/filecheck_helpers.rs`."><meta name="keywords" content="rust, rustlang, rust-lang"><title>filecheck_helpers.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../SourceSerif4-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../FiraSans-Regular.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../FiraSans-Medium.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../SourceCodePro-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../SourceSerif4-Bold.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../SourceCodePro-Semibold.ttf.woff2"><link rel="stylesheet" href="../../normalize.css"><link rel="stylesheet" href="../../rustdoc.css" id="mainThemeStyle"><link rel="stylesheet" href="../../ayu.css" disabled><link rel="stylesheet" href="../../dark.css" disabled><link rel="stylesheet" href="../../light.css" id="themeStyle"><script id="default-settings" ></script><script src="../../storage.js"></script><script defer src="../../source-script.js"></script><script defer src="../../source-files.js"></script><script defer src="../../main.js"></script><noscript><link rel="stylesheet" href="../../noscript.css"></noscript><link rel="alternate icon" type="image/png" href="../../favicon-16x16.png"><link rel="alternate icon" type="image/png" href="../../favicon-32x32.png"><link rel="icon" type="image/svg+xml" href="../../favicon.svg"></head><body class="rustdoc source"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><div class="width-limiter"><nav class="sub"><a class="sub-logo-container" href="../../walox_test_util/index.html"><img class="rust-logo" src="../../rust-logo.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../wheel.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><pre class="src-line-numbers"><span id="1">1</span>
+<span id="2">2</span>
+<span id="3">3</span>
+<span id="4">4</span>
+<span id="5">5</span>
+<span id="6">6</span>
+<span id="7">7</span>
+<span id="8">8</span>
+<span id="9">9</span>
+<span id="10">10</span>
+<span id="11">11</span>
+<span id="12">12</span>
+<span id="13">13</span>
+<span id="14">14</span>
+<span id="15">15</span>
+<span id="16">16</span>
+<span id="17">17</span>
+<span id="18">18</span>
+<span id="19">19</span>
+<span id="20">20</span>
+<span id="21">21</span>
+<span id="22">22</span>
+<span id="23">23</span>
+<span id="24">24</span>
+<span id="25">25</span>
+<span id="26">26</span>
+<span id="27">27</span>
+<span id="28">28</span>
+<span id="29">29</span>
+<span id="30">30</span>
+<span id="31">31</span>
+<span id="32">32</span>
+<span id="33">33</span>
+<span id="34">34</span>
+<span id="35">35</span>
+<span id="36">36</span>
+<span id="37">37</span>
+<span id="38">38</span>
+<span id="39">39</span>
+<span id="40">40</span>
+<span id="41">41</span>
+<span id="42">42</span>
+<span id="43">43</span>
+<span id="44">44</span>
+<span id="45">45</span>
+<span id="46">46</span>
+<span id="47">47</span>
+<span id="48">48</span>
+<span id="49">49</span>
+<span id="50">50</span>
+<span id="51">51</span>
+<span id="52">52</span>
+<span id="53">53</span>
+<span id="54">54</span>
+<span id="55">55</span>
+<span id="56">56</span>
+<span id="57">57</span>
+<span id="58">58</span>
+<span id="59">59</span>
+<span id="60">60</span>
+<span id="61">61</span>
+<span id="62">62</span>
+<span id="63">63</span>
+<span id="64">64</span>
+<span id="65">65</span>
+<span id="66">66</span>
+<span id="67">67</span>
+<span id="68">68</span>
+<span id="69">69</span>
+<span id="70">70</span>
+<span id="71">71</span>
+<span id="72">72</span>
+<span id="73">73</span>
+<span id="74">74</span>
+<span id="75">75</span>
+<span id="76">76</span>
+<span id="77">77</span>
+<span id="78">78</span>
+<span id="79">79</span>
+<span id="80">80</span>
+<span id="81">81</span>
+<span id="82">82</span>
+<span id="83">83</span>
+<span id="84">84</span>
+<span id="85">85</span>
+<span id="86">86</span>
+<span id="87">87</span>
+<span id="88">88</span>
+<span id="89">89</span>
+<span id="90">90</span>
+<span id="91">91</span>
+<span id="92">92</span>
+<span id="93">93</span>
+<span id="94">94</span>
+<span id="95">95</span>
+<span id="96">96</span>
+<span id="97">97</span>
+<span id="98">98</span>
+<span id="99">99</span>
+<span id="100">100</span>
+<span id="101">101</span>
+<span id="102">102</span>
+<span id="103">103</span>
+<span id="104">104</span>
+<span id="105">105</span>
+<span id="106">106</span>
+<span id="107">107</span>
+<span id="108">108</span>
+<span id="109">109</span>
+<span id="110">110</span>
+<span id="111">111</span>
+<span id="112">112</span>
+<span id="113">113</span>
+<span id="114">114</span>
+<span id="115">115</span>
+<span id="116">116</span>
+<span id="117">117</span>
+<span id="118">118</span>
+<span id="119">119</span>
+<span id="120">120</span>
+<span id="121">121</span>
+<span id="122">122</span>
+<span id="123">123</span>
+<span id="124">124</span>
+<span id="125">125</span>
+<span id="126">126</span>
+<span id="127">127</span>
+<span id="128">128</span>
+<span id="129">129</span>
+<span id="130">130</span>
+<span id="131">131</span>
+<span id="132">132</span>
+<span id="133">133</span>
+<span id="134">134</span>
+<span id="135">135</span>
+<span id="136">136</span>
+<span id="137">137</span>
+<span id="138">138</span>
+<span id="139">139</span>
+<span id="140">140</span>
+<span id="141">141</span>
+<span id="142">142</span>
+<span id="143">143</span>
+<span id="144">144</span>
+<span id="145">145</span>
+<span id="146">146</span>
+<span id="147">147</span>
+<span id="148">148</span>
+<span id="149">149</span>
+<span id="150">150</span>
+<span id="151">151</span>
+<span id="152">152</span>
+<span id="153">153</span>
+<span id="154">154</span>
+<span id="155">155</span>
+<span id="156">156</span>
+<span id="157">157</span>
+<span id="158">158</span>
+<span id="159">159</span>
+<span id="160">160</span>
+<span id="161">161</span>
+<span id="162">162</span>
+<span id="163">163</span>
+<span id="164">164</span>
+<span id="165">165</span>
+<span id="166">166</span>
+<span id="167">167</span>
+<span id="168">168</span>
+<span id="169">169</span>
+<span id="170">170</span>
+<span id="171">171</span>
+<span id="172">172</span>
+<span id="173">173</span>
+<span id="174">174</span>
+<span id="175">175</span>
+<span id="176">176</span>
+</pre><pre class="rust"><code><span class="doccomment">//! Test helper methods that are specific to filecheck tests.
+
+</span><span class="kw">use </span>anyhow::Context;
+<span class="kw">use </span>filecheck::{Checker, CheckerBuilder};
+<span class="kw">use </span>globwalk::FileType;
+<span class="kw">use </span>std::{
+    env, fs, io,
+    path::{Component, Path, PathBuf},
+};
+<span class="kw">use </span>threadpool::ThreadPool;
+
+<span class="doccomment">/// Create a pair of `Checker` objects that will check the stdout and stderr
+/// respectively.
+</span><span class="kw">pub fn </span>create_filecheckers(comments: <span class="kw-2">&amp;</span>Vec&lt;<span class="kw-2">&amp;</span>str&gt;, test_suite_id: <span class="kw-2">&amp;</span>str) -&gt; (Checker, Checker) {
+    <span class="kw">let </span><span class="kw-2">mut </span>checker_builder = CheckerBuilder::new();
+    <span class="kw">let </span><span class="kw-2">mut </span>stderr_checker_builder = CheckerBuilder::new();
+
+    <span class="kw">for </span>comment <span class="kw">in </span>comments {
+        <span class="kw">if </span>comment.starts_with(<span class="string">&quot;+error&quot;</span>) {
+            <span class="kw">let </span>comment = <span class="kw-2">&amp;</span>comment[<span class="string">&quot;+error&quot;</span>.len()..];
+
+            <span class="kw">let </span>comment = <span class="kw">if </span>comment.starts_with(<span class="string">&quot;+&quot;</span>) {
+                <span class="kw">if </span>comment[<span class="number">1</span>..].starts_with(test_suite_id) {
+                    <span class="kw-2">&amp;</span>comment[(<span class="number">1 </span>+ test_suite_id.len())..]
+                } <span class="kw">else </span>{
+                    <span class="comment">// we use the +error-&lt;test_suite_id&gt; to filter out checks which are not supposed
+                    // to be applied to the current test suite
+                    </span><span class="macro">tracing::debug!</span>(
+                        <span class="question-mark">?</span>comment,
+                        <span class="string">&quot;Skipping comment that doesn&#39;t apply to current suite&quot;
+                    </span>);
+                    <span class="kw">continue</span>;
+                }
+            } <span class="kw">else </span>{
+                comment
+            };
+
+            <span class="kw">let _ </span>= stderr_checker_builder.directive(comment).unwrap();
+        } <span class="kw">else </span>{
+            <span class="kw">let _ </span>= checker_builder.directive(comment).unwrap();
+        }
+    }
+
+    <span class="kw">let </span>error_checker = stderr_checker_builder.finish();
+    <span class="kw">let </span>checker = checker_builder.finish();
+
+    (checker, error_checker)
+}
+
+<span class="doccomment">/// Execute a suite of filecheck tests.
+</span><span class="kw">pub fn </span>execute_filecheck_tests(
+    test_suite_name: <span class="kw-2">&amp;</span>str,
+    test_data_patterns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+    execute_single_test: <span class="kw">fn</span>(String) -&gt; <span class="prelude-ty">Result</span>&lt;(), anyhow::Error&gt;,
+) -&gt; anyhow::Result&lt;()&gt; {
+    <span class="macro">tracing::debug!</span>(<span class="string">&quot;Starting interpreter filecheck tests.&quot;</span>);
+    <span class="kw">let </span>test_data_dir = <span class="kw">if let </span><span class="prelude-val">Some</span>(val) = env::var_os(<span class="string">&quot;TEST_DATA_DIR&quot;</span>) {
+        PathBuf::from(val)
+    } <span class="kw">else </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>workspace_root = <span class="kw">super</span>::get_workspace_root()<span class="question-mark">?</span>;
+        workspace_root.push(<span class="string">&quot;test_data&quot;</span>);
+        workspace_root
+    };
+
+    <span class="macro">tracing::debug!</span>(<span class="string">&quot;Checking for test name pattern.&quot;</span>);
+    <span class="kw">let </span>test_name_pattern = env::args()
+        .nth(<span class="number">1</span>)
+        .map(|reg_src| regex::Regex::new(<span class="kw-2">&amp;</span>reg_src).expect(<span class="string">&quot;Passed regex was not valid!&quot;</span>));
+
+    <span class="macro">assert!</span>(
+        test_data_dir.is_dir(),
+        <span class="string">&quot;The test data directory should be a directory.&quot;
+    </span>);
+
+    <span class="macro">tracing::debug!</span>(test_data = %test_data_dir.display(), <span class="question-mark">?</span>test_name_pattern, <span class="string">&quot;Gathering files from test data directory&quot;</span>);
+
+    <span class="kw">let </span>pool = ThreadPool::with_name(<span class="string">&quot;test-runner&quot;</span>.into(), num_cpus::get());
+    <span class="kw">let </span>(tx, rx) = std::sync::mpsc::channel();
+    <span class="kw">let </span><span class="kw-2">mut </span>test_count = <span class="number">0</span>;
+
+    <span class="kw">let </span>test_dispatch_span = <span class="macro">tracing::debug_span!</span>(<span class="string">&quot;test_dispatch&quot;</span>);
+    <span class="kw">for </span>entry <span class="kw">in </span>collect_test_files(<span class="kw-2">&amp;</span>test_data_dir, test_data_patterns)<span class="question-mark">? </span>{
+        <span class="kw">let </span>_guard = test_dispatch_span.enter();
+
+        <span class="kw">let </span>entry = entry.context(<span class="string">&quot;error retrieving test file entry&quot;</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>path = entry.path();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>test_name_components: Vec&lt;<span class="kw">_</span>&gt; = path
+            .strip_prefix(<span class="kw-2">&amp;</span>test_data_dir)
+            .context(<span class="string">&quot;unable to strip test data dir prefix&quot;</span>)<span class="question-mark">?
+            </span>.components()
+            .map(|c| <span class="kw">match </span>c {
+                Component::Normal(c) =&gt; c
+                    .to_str()
+                    .ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">&quot;Unable to convert file component to unicode&quot;</span>)),
+                x =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(<span class="string">&quot;Non-normal path component: [{:?}]&quot;</span>, x)),
+            })
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+        test_name_components.insert(<span class="number">0</span>, test_suite_name);
+
+        <span class="kw">let </span>test_name_prefix: String = test_name_components
+            .split_last()
+            .map(|(<span class="kw">_</span>, cs)| cs.join(<span class="string">&quot;::&quot;</span>))
+            .unwrap_or_default();
+
+        <span class="kw">let </span>test_name_suffix: String = path
+            .file_stem()
+            .ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">&quot;File lacks name stem&quot;</span>))<span class="question-mark">?
+            </span>.to_str()
+            .ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">&quot;Unable to convert file stem to unicode&quot;</span>))<span class="question-mark">?
+            </span>.into();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>test_name = String::new();
+        <span class="kw">if </span>!test_name_prefix.is_empty() {
+            test_name.push_str(<span class="kw-2">&amp;</span>test_name_prefix);
+            test_name.push_str(<span class="string">&quot;::&quot;</span>);
+        }
+        test_name.push_str(<span class="kw-2">&amp;</span>test_name_suffix);
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>test_name_pattern) = test_name_pattern {
+            <span class="kw">if </span>!test_name_pattern.is_match(<span class="kw-2">&amp;</span>test_name) {
+                <span class="kw">continue</span>;
+            }
+        }
+
+        <span class="kw">let </span>file_content = fs::read_to_string(path)<span class="question-mark">?</span>;
+
+        <span class="macro">tracing::trace!</span>(%test_name, <span class="string">&quot;Dispatching test case for execution&quot;</span>);
+
+        pool.execute({
+            <span class="kw">let </span>tx = tx.clone();
+            <span class="kw">let </span>test_span =
+                <span class="macro">tracing::trace_span!</span>(<span class="string">&quot;test_execution&quot;</span>, id = test_count, name = %test_name);
+
+            <span class="kw">move </span>|| {
+                test_span.in_scope(|| {
+                    <span class="macro">tracing::trace!</span>(<span class="string">&quot;Starting test execution&quot;</span>);
+
+                    <span class="kw">let </span>result = <span class="kw">super</span>::Test::execute(<span class="kw-2">&amp;</span>execute_single_test, file_content);
+
+                    <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>result, <span class="string">&quot;Test case finished. Sending result.&quot;</span>);
+
+                    tx.send(<span class="kw">super</span>::TestOutput {
+                        name: test_name,
+                        result,
+                    })
+                    .expect(<span class="string">&quot;Failed to send test result&quot;</span>);
+                });
+            }
+        });
+
+        test_count += <span class="number">1</span>;
+    }
+
+    <span class="macro">tracing::debug!</span>(parent: <span class="kw-2">&amp;</span>test_dispatch_span, %test_count, <span class="string">&quot;Sent all test cases to threadpool, now waiting for tests to complete.&quot;</span>);
+
+    pool.join();
+
+    <span class="macro">tracing::debug!</span>(parent: <span class="kw-2">&amp;</span>test_dispatch_span, %test_count, <span class="string">&quot;All tests complete. Receiving results.&quot;</span>);
+
+    <span class="kw">let </span>outputs: Vec&lt;<span class="kw">_</span>&gt; = rx.into_iter().take(test_count).collect();
+
+    <span class="kw">super</span>::output_test_outputs(<span class="kw-2">&amp;mut </span>io::stdout(), outputs).map_err(Into::into)
+}
+
+<span class="kw">fn </span>collect_test_files(
+    base_dir: <span class="kw-2">&amp;</span>Path,
+    test_data_patterns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+) -&gt; <span class="prelude-ty">Result</span>&lt;
+    <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;globwalk::DirEntry, globwalk::WalkError&gt;&gt;,
+    globwalk::GlobError,
+&gt; {
+    globwalk::GlobWalkerBuilder::from_patterns(base_dir, test_data_patterns)
+        .file_type(FileType::FILE)
+        .build()
+}
+</code></pre></div>
+</section></div></main><div id="rustdoc-vars" data-root-path="../../" data-current-crate="walox_test_util" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.66.0 (69f9c33d7 2022-12-12)" ></div></body></html>

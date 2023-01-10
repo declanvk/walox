@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":[["create_filecheckers","Create a pair of `Checker` objects that will check the stdout and stderr respectively."],["execute_filecheck_tests","Execute a suite of filecheck tests."]]};

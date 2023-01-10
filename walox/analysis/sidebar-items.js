@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":[["ValidationError","Types of errors that occur when traversing the complete AST."]],"struct":[["AstValidator","Traverse the AST and assert specific properties like no top level return statements or no usage of the `this` variable outside methods"]]};

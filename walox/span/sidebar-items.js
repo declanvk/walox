@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":[["Span","A representation of a continuous block of source code"]]};

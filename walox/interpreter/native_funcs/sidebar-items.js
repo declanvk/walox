@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":[["DEFAULTS","The default list of native functions"]],"fn":[["clock","A native function which takes no arguments and returns the number of seconds since the UNIX epoch."]]};
