@@ -225,7 +225,7 @@ impl<'h, W: Write> VM<'h, W> {
                         match (a.read::<StringObject>(), b.read::<StringObject>()) {
                             (Some(a), Some(b)) => {
                                 let mut res = String::from(&*a.value);
-                                res.push_str(&*b.value);
+                                res.push_str(&b.value);
 
                                 self.heap.allocate_string(res).into()
                             },
@@ -289,7 +289,7 @@ impl<'h, W: Write> VM<'h, W> {
                 },
                 OpCode::Print => {
                     let value = self.stack.pop().unwrap();
-                    writeln!(self.stdout, "{}", value).expect("unable to write to stdout");
+                    writeln!(self.stdout, "{value}").expect("unable to write to stdout");
                 },
                 OpCode::Pop => {
                     self.stack.pop().unwrap();

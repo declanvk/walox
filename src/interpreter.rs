@@ -102,7 +102,7 @@ where
 
         let value = expr.visit_with(self)?;
 
-        let _ = writeln!(self.stdout, "{}", value).expect("failed to write to stdout");
+        writeln!(self.stdout, "{value}").expect("failed to write to stdout");
 
         Ok(Value::Null)
     }
@@ -272,7 +272,7 @@ where
             (BinaryOpKind::Mult, Value::Number(l), Value::Number(r)) => (l * r).into(),
             (BinaryOpKind::Add, Value::Number(l), Value::Number(r)) => (l + r).into(),
             (BinaryOpKind::Add, Value::String(l), Value::String(r)) => {
-                SmolStr::new(format!("{}{}", l, r)).into()
+                SmolStr::new(format!("{l}{r}")).into()
             },
             (BinaryOpKind::Sub, Value::Number(l), Value::Number(r)) => (l - r).into(),
             (BinaryOpKind::Div, Value::Number(l), Value::Number(r)) => (l / r).into(),
@@ -402,7 +402,7 @@ where
         let object = object.visit_with(self)?;
 
         match object {
-            Value::Instance(inst) => inst.get(&property),
+            Value::Instance(inst) => inst.get(property),
             v => Err(RuntimeException::AccessPropertyNonObject(v.r#type()).into()),
         }
     }

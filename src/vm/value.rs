@@ -179,8 +179,7 @@ impl HeapInner {
         }
     }
 
-    #[allow(clippy::mut_from_ref)]
-    fn allocate_with<'h, 'o, T: ConcreteObject>(&'h self, f: impl FnOnce() -> T) -> &'o mut T {
+    fn allocate_with<'o, T: ConcreteObject>(&self, f: impl FnOnce() -> T) -> &'o mut T {
         let layout = alloc::Layout::new::<T>();
         if layout.size() == 0 {
             panic!("Cannot allocate zero-sized value!");
@@ -529,7 +528,7 @@ pub enum ObjectType {
 }
 
 impl ObjectType {
-    fn to_str(&self) -> &'static str {
+    fn to_str(self) -> &'static str {
         match self {
             ObjectType::String => "string",
             ObjectType::Function => "function",

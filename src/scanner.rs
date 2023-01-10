@@ -189,7 +189,7 @@ impl<'s> Scanner<'s> {
             // Handle long tokens
             match c {
                 '"' => return self.scan_string(pos),
-                x if x.is_digit(10) => return self.scan_number(pos),
+                x if x.is_ascii_digit() => return self.scan_number(pos),
                 x if Self::is_ident_start(x) => return Ok(Some(self.scan_identifer(pos))),
                 _ => {},
             };
@@ -234,7 +234,7 @@ impl<'s> Scanner<'s> {
         loop {
             let p = self.peek().map(|(_, c)| c);
 
-            if p.map_or(true, |c| !c.is_digit(10)) {
+            if p.map_or(true, |c| !c.is_ascii_digit()) {
                 break;
             }
 
@@ -244,13 +244,13 @@ impl<'s> Scanner<'s> {
         let p1 = self.peek().map(|(_, c)| c);
         let p2 = self.peek2().map(|(_, c)| c);
 
-        if p1 == Some('.') && p2.map_or(false, |c| c.is_digit(10)) {
+        if p1 == Some('.') && p2.map_or(false, |c| c.is_ascii_digit()) {
             let _ = self.advance();
 
             loop {
                 let p = self.peek().map(|(_, c)| c);
 
-                if p.map_or(true, |c| !c.is_digit(10)) {
+                if p.map_or(true, |c| !c.is_ascii_digit()) {
                     break;
                 }
 
@@ -370,9 +370,9 @@ pub enum Literal {
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Literal::Number(n) => write!(f, "{}", n),
-            Literal::String(s) => write!(f, "\"{}\"", s),
-            Literal::Identifier(s) => write!(f, "{}", s),
+            Literal::Number(n) => write!(f, "{n}"),
+            Literal::String(s) => write!(f, "\"{s}\""),
+            Literal::Identifier(s) => write!(f, "{s}"),
         }
     }
 }

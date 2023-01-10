@@ -5,9 +5,9 @@ authors = ["Declan Kelly <dkelly.home@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-thiserror = "1.0"
-tracing = "0.1"
-smol_str = "0.1"
+thiserror = "1.0.38"
+tracing = "0.1.37"
+smol_str = "0.1.23"
 
 [dev-dependencies.walox-test-util]
 path = "test_util"

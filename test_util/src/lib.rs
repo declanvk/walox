@@ -9,6 +9,7 @@ pub use num_cpus;
 pub use regex;
 use std::{
     any::Any,
+    convert::TryInto,
     fmt::Display,
     io,
     ops::Deref,
@@ -25,7 +26,10 @@ pub mod filecheck_helpers;
 pub fn get_workspace_root() -> anyhow::Result<PathBuf> {
     let metadata = cargo_metadata::MetadataCommand::new().exec()?;
 
-    Ok(metadata.workspace_root)
+    metadata
+        .workspace_root
+        .try_into()
+        .map_err(anyhow::Error::from)
 }
 
 /// Take an `Any` trait object and attempt to cast it to some form of string.

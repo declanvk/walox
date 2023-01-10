@@ -35,7 +35,7 @@ impl Visitor for Printer {
         let o1 = left.visit_with(self);
         let o2 = right.visit_with(self);
 
-        format!("({} {} {})", operator, o1, o2)
+        format!("({operator} {o1} {o2})")
     }
 
     fn visit_grouping_expr(&mut self, d: &super::GroupingExpr) -> Self::Output {
@@ -43,7 +43,7 @@ impl Visitor for Printer {
 
         let o = inner.visit_with(self);
 
-        format!("(group {})", o)
+        format!("(group {o})")
     }
 
     fn visit_literal_expr(&mut self, d: &super::LiteralExpr) -> Self::Output {
@@ -55,7 +55,7 @@ impl Visitor for Printer {
 
         let o = right.visit_with(self);
 
-        format!("({} {})", operator, o)
+        format!("({operator} {o})")
     }
 
     fn visit_logical_expr(&mut self, d: &super::LogicalExpr) -> Self::Output {
@@ -68,7 +68,7 @@ impl Visitor for Printer {
         let ol = left.visit_with(self);
         let or = right.visit_with(self);
 
-        format!("({} {} {})", operator.symbol(), ol, or)
+        format!("({} {ol} {or})", operator.symbol())
     }
 
     fn visit_assign_expr(&mut self, d: &super::AssignExpr) -> Self::Output {
@@ -76,13 +76,13 @@ impl Visitor for Printer {
 
         let value = value.visit_with(self);
 
-        format!("(= {} {})", name, value)
+        format!("(= {name} {value})")
     }
 
     fn visit_var_expr(&mut self, d: &super::VarExpr) -> Self::Output {
         let super::VarExpr { name } = d;
 
-        format!("(var {})", name)
+        format!("(var {name})")
     }
 }
 
